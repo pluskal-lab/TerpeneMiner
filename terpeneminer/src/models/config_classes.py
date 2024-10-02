@@ -74,3 +74,13 @@ class EmbLogisticRegressionConfig(EmbSklearnBaseConfig, SklearnBaseConfig):
     max_iter: int
     solver: str
     requires_multioutputwrapper_for_multilabel: bool
+
+
+@dataclass
+class EmbRandomForestTTTConfig(EmbSklearnBaseConfig, FeaturesRandomForestConfig):
+    """
+    A data class to store the corresponding model attributes
+    """
+    representations_path_test: str
+    ttt_rounds: int
+    requires_multioutputwrapper_for_multilabel: bool

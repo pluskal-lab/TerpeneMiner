@@ -31,6 +31,7 @@ class BaseConfig:
     load_per_class_params_from: str
     reuse_existing_partial_results: bool
     run_against_wetlab: bool = False
+    run_ttt: bool = False
 
     @classmethod
     def load(cls, path_to_config: Union[str, Path]) -> dict:

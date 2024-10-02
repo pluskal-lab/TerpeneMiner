@@ -4,7 +4,7 @@ import logging
 import pickle
 from collections import defaultdict
 from typing import Optional
-from sklearn.metrics import average_precision_score, roc_auc_score, precision_recall_curve  # type: ignore
+from sklearn.metrics import log_loss, average_precision_score, roc_auc_score, precision_recall_curve  # type: ignore
 import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 
@@ -118,6 +118,9 @@ def eval_experiment(
                             val_proba_np, class_names_in_fold, test_df = pickle.load(
                                 file
                             )
+
+                        test_df = test_df[test_df[target_col].map(lambda x: 'Unknown' not in x)]
+
                         if class_name in class_names_in_fold:
                             if not isinstance(class_names_in_fold, list):
                                 class_names_in_fold = list(class_names_in_fold)
@@ -143,6 +146,7 @@ def eval_experiment(
                                     if category == ""
                                     else f"{category}_|_{class_name}"
                                 )
+                                print(f'class name: {class_name}, category: {category}, sum(y_true): {sum(y_true)}, sum(y_true_category): {sum(y_true_category)}')
                                 if y_true_category.sum() >= min_sample_count_for_eval:
                                     average_precision = average_precision_score(
                                         y_true_category, y_pred_category
@@ -180,7 +184,6 @@ def evaluate_selected_experiments(args: argparse.Namespace):
     Function for evaluating the outputs of experiments that are enabled in the configs or a selected experiment.
 
     :param args: Parsed argparse namespace containing the evaluation parameters
-
     :return: None. Outputs the evaluation results to specified files.
     """
 

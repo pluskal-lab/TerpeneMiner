@@ -1,0 +1,5 @@
+include: ../main_config.yaml
+representations_path: "data/gathered_embs_esm-1v_embs_avg.h5"
+representations_path_test: "data/tps_seqs_ttt_embs_epoch"
+optimize_hyperparams: false
+ttt_rounds: 16

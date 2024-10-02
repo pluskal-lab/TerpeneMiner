@@ -1,0 +1,7 @@
+include: ../main_config.yaml
+representations_path: "data/gathered_embs_esm-1v_embs_avg.h5"
+representations_path_test: "data/lr=0.001_grad_acc_steps=2/tps_seqs_ttt_embs_epoch"
+hyperparam_dimensions:
+  ttt_rounds:
+    type: "int"
+    args: [0, 29, "uniform"]

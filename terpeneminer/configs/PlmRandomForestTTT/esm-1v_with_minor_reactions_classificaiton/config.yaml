@@ -1,0 +1,9 @@
+include: ../main_config.yaml
+representations_path: "data/gathered_embs_esm-1v_embs_avg.h5"
+optimize_hyperparams: true
+hyperparam_dimensions:
+  ttt_rounds:
+    type: "int"
+    args: [0, 29, "uniform" ]
+
+

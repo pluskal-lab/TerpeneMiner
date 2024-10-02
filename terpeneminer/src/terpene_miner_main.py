@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
         "--minimal-count-to-eval",
         type=int,
         help="A minimal number of class representatives in the hold-out fold to include class during eval",
-        default=3,
+        default=5,
     )
     parser_eval.add_argument(
         "--n-folds", help="A number of folds used in CV", type=int, default=5

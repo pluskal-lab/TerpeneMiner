@@ -15,7 +15,7 @@ import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 import sklearn.base  # type: ignore
 from sklearn.base import BaseEstimator  # type: ignore
-from sklearn.metrics import average_precision_score  # type: ignore
+from sklearn.metrics import average_precision_score, f1_score  # type: ignore
 from sklearn.model_selection import StratifiedGroupKFold  # type: ignore
 from skopt import gp_minimize  # type: ignore
 from skopt.space import Categorical, Integer, Real  # type: ignore
@@ -88,7 +88,16 @@ class BaseModel(ABC, BaseEstimator):
             except AttributeError:
                 reuse_existing_partial_results = False
 
-            self.optimize_hyperparameters(
+            if self.config.run_ttt:
+                self.iter_over_hyperparameters(
+                    train_df,
+                    per_class_optimization,
+                    n_fold_splits=5,
+                    phylogenetic_clusters_path="data/phylogenetic_clusters.pkl",
+                    **self.config.hyperparam_dimensions,
+                )
+            else:
+                self.optimize_hyperparameters(
                 train_df,
                 n_calls=self.config.n_calls_hyperparams_opt,
                 per_class_optimization=per_class_optimization,
@@ -390,6 +399,167 @@ class BaseModel(ABC, BaseEstimator):
 
         logger.info("Hyperparameter optimization finished!")
 
+    def iter_over_hyperparameters(
+        self,
+        train_df: pd.DataFrame,
+        per_class_optimization: bool,
+        n_fold_splits: int,
+        phylogenetic_clusters_path: str,
+        **dimension_params,
+    ):
+        """
+        This function performed hyperparameter tuning using algorithms based on gaussian process regression
+        """
+        logger.info("Starting iter over hyperparameters...")
+        assert not per_class_optimization, "For TTT, no per-class optimization is supposed"
+        if per_class_optimization:
+            class_names = (
+                self.config.class_names
+                if not hasattr(self.config, "class_name")
+                else [self.config.class_name]
+            )
+        else:
+            class_names = ["all_classes"]
+        for class_name in class_names:
+            logger.info("Optimization of hyperparameters for %s", class_name)
+            prefix = "" if class_name == "all_classes" else f"{class_name}_"
+
+            dimensions = []
+            # x0 -> to enforce evaluation of the default parameters
+            initial_instance_parameters = self.__dict__
+            if hasattr(self, "classifier_class"):
+                classifier_attributes = inspect.getfullargspec(
+                    self.classifier_class
+                ).kwonlydefaults
+                if classifier_attributes is not None:
+                    classifier_attributes.update(initial_instance_parameters)
+                    initial_instance_parameters = classifier_attributes
+            hyperparam_combinations = []
+            for name, characteristics in dimension_params.items():
+                if characteristics["type"] != "categorical":
+                    start, end, step_type = characteristics["args"]
+                    if step_type == "uniform":
+                        dims = np.linspace(start, end, 31)
+                    elif step_type == "log-uniform":
+                        dims = np.logspace(np.log10(start), np.log10(end), 31)
+                    else:
+                        raise ValueError(f"Unknown step type: {step_type}")
+                    if characteristics["type"] == "int":
+                        dims = dims.astype(int)
+                    dims = sorted(list(set(dims).union({start, end})))
+                else:
+                    dims = characteristics["args"]
+                dimensions.append((name, dims))
+
+            params_output_root = self.output_root / "hyperparameters_optimization"
+            logger.info(
+                "Hyperparam optimization results will be stored in %s",
+                str(params_output_root),
+            )
+            if not params_output_root.exists():
+                params_output_root.mkdir(exist_ok=True, parents=True)
+
+            assert len(dimensions) == 1, "Only one hyperparameter is supported"
+            with open('data/ttt_ids_low_conf.pkl', 'rb') as file:
+                ids_low_conf = set(pickle.load(file))
+            def get_map(params, train_df, cross_validation):
+                if class_name == "all_classes":
+                    prefix = ""
+                else:
+                    prefix = f"{class_name}_"
+                params = {
+                    f"{prefix}{param_name}": param_value
+                    if param_value != "None"
+                    else None
+                    for param_name, param_value in params.items()
+                }
+                self.set_params(**params)
+                map_scores = []
+                for trn_ids, val_ids in cross_validation:
+                    trn_df = train_df[
+                        train_df[self.config.id_col_name].isin(trn_ids) & train_df[self.config.target_col_name].map(
+                lambda classes: self.config.neg_val not in classes)
+                    ]
+                    vl_df = train_df[
+                        train_df[self.config.id_col_name].isin(val_ids) & train_df[self.config.target_col_name].map(
+                lambda classes: self.config.neg_val not in classes
+            )
+                    ]
+                    selected_class_name = (
+                        class_name if per_class_optimization else None
+                    )
+                    self.fit_core(
+                        trn_df,
+                        class_name=selected_class_name,
+                    )
+                    map_scores.append(
+                        eval_model_mean_average_precision_neg(
+                            self,
+                            vl_df[vl_df['Uniprot ID'].isin(ids_low_conf)],
+                            selected_class_name=selected_class_name,
+                        )
+                    )
+                score = np.nanmean(map_scores)
+
+                run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                with open(
+                    params_output_root
+                    / f"params_{params['ttt_rounds']}_{run_timestamp}_{1000 - 1000*score:.0f}.json",
+                    "w",
+                    encoding="utf8",
+                ) as file:
+                    json.dump(
+                        {
+                            key: (
+                                val
+                                if not isinstance(val, np.integer)
+                                else int(val)
+                            )
+                            for key, val in params.items()
+                        },
+                        file,
+                    )
+
+                return score
+
+
+            # k_fold = StratifiedGroupKFold(
+            #     n_splits=n_fold_splits, shuffle=True, random_state=0
+            # )
+            # with open(phylogenetic_clusters_path, "rb") as file:
+            #     id_2_group, _ = pickle.load(file)
+            # train_df["seq_group"] = train_df[self.config.id_col_name].map(
+            #     lambda x: str(id_2_group[x])
+            #     if x in id_2_group
+            #     else (x if isinstance(x, str) else str(uuid.uuid4()))
+            # )
+            with open('data/id_2_fold.pkl', 'rb') as file:
+                id_2_fold = pickle.load(file)
+            train_df["fold"] = train_df[self.config.id_col_name].map(
+                lambda x: id_2_fold[x]
+            )
+            all_folds = sorted(train_df['fold'].unique())
+            k_fold = []
+            for test_fold in all_folds:
+                trn_ids = train_df[train_df['fold'] != test_fold][self.config.id_col_name].unique()
+                val_ids = train_df[train_df['fold'] == test_fold][self.config.id_col_name].unique()
+                k_fold.append((trn_ids, val_ids))
+
+
+            param_name = dimensions[0][0]
+            best_map = -float("inf")
+            best_param = None
+            for param_val in dimensions[0][1]:
+                params = {param_name: param_val}
+                map_val = 1 - get_map(params, train_df, k_fold)
+                if map_val > best_map:
+                    best_map = map_val
+                    best_param = param_val
+            best_params = {
+                f"{prefix}{param_name}": best_param
+            }
+            self.set_params(**best_params)
+
     @classmethod
     @abstractmethod
     def config_class(cls) -> Type[BaseConfig]:
@@ -442,7 +612,7 @@ def eval_model_mean_average_precision_neg(
     model: BaseModel,
     val_df: pd.DataFrame,
     selected_class_name: str = None,
-    min_number_of_positive_cases: int = 2,
+    min_number_of_positive_cases: int = 15,
 ):
     """
     Helper function for model evaluation
@@ -451,15 +621,16 @@ def eval_model_mean_average_precision_neg(
 
     average_precisions = []
     for class_i, class_name in enumerate(model.config.class_names):
-        if class_name != model.config.neg_val and (
+        print('Iterating over class: ', class_name)
+        if class_name != model.config.neg_val and class_name != "isTPS" and (
             selected_class_name is None or class_name == selected_class_name
         ):
             y_true = val_df[model.config.target_col_name].map(lambda x: class_name in x)
             if sum(y_true) >= min_number_of_positive_cases:
+                # average_precision = f1_score(y_true, (y_pred[:, class_i] >= 0.5).astype(int)) #average_precision_score(y_true, y_pred[:, class_i])
                 average_precision = average_precision_score(y_true, y_pred[:, class_i])
                 average_precisions.append(average_precision)
                 print(
-                    selected_class_name,
                     class_name,
                     " !!!: ",
                     np.mean(y_true),

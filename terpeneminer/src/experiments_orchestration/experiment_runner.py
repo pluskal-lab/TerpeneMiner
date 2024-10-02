@@ -187,6 +187,7 @@ def run_experiment(experiment_info: ExperimentInfo):
                         )
 
                 # fitting the model
+                print('Classes in train: ', trn_df[config.target_col_name].value_counts())
                 model.fit(trn_df)
                 logger.info(
                     "Trained model %s (%s), fold %s",
@@ -198,6 +199,10 @@ def run_experiment(experiment_info: ExperimentInfo):
                     model.save()
 
                 # scoring the model
+                with open('data/ttt_ids_low_conf.pkl', 'rb') as file:
+                    ids_low_conf = set(pickle.load(file))
+                test_df = test_df[test_df['Uniprot ID'].isin(ids_low_conf)]
+
                 val_proba_np = model.predict_proba(test_df)
                 with open(
                     model.output_root / f"fold_{test_fold}_results.pkl", "wb"

@@ -128,7 +128,7 @@ def plot_bars(
     )
 
     ax.set_xticks(list(range(len(model_names_plots))))
-    ax.set_ylim([0, 1.001])
+    ax.set_ylim([np.min(means) - 0.005, np.max(means) + 0.005])
     ax.set_xticklabels(model_names_plots, rotation=90)
     ax.set_ylabel(metric_name, fontsize=15)
     ax.set_title(title, fontsize=19)
