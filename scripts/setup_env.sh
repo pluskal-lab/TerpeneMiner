@@ -19,6 +19,7 @@ pip install plotly
 pip install fair-esm==2.0.0
 pip install ankh==1.10.0
 pip install tables
+pip install h5py
 pip install tqdm
 pip install py-mcc-f1
 pip install inquirer
@@ -39,5 +40,6 @@ fi
 git clone https://github.com/tttianhao/CLEAN.git
 cd CLEAN/app/src
 echo "export PATH=\$PATH:$(pwd)" >> ~/.bashrc
+echo "export PYTHONPATH=\$PYTHONPATH:$(pwd)" >> ~/.bashrc
 source ~/.bashrc
 cd $cwd
