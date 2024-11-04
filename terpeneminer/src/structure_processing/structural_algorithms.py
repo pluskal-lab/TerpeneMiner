@@ -11,6 +11,7 @@ from multiprocessing import Pool
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
+import logging
 
 import matplotlib.pyplot as plt  # type: ignore
 import numpy as np  # type: ignore
@@ -19,13 +20,22 @@ from pymol import CmdException, cmd, stored  # type: ignore
 from scipy.spatial import KDTree  # type: ignore
 from tqdm.auto import tqdm  # type: ignore
 
-SUPPORTED_DOMAINS = {"alpha", "beta", "gamma", "delta", "epsilon"}
+logger = logging.getLogger(__file__)
+logger.setLevel(logging.INFO)
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+SUPPORTED_DOMAINS = {"alpha", "beta", "gamma", "delta", "epsilon", "alphaWeird"}
 DOMAIN_2_THRESHOLD = {
-    "beta": (0.6, 50),
-    "delta": (0.6, 50),
-    "epsilon": (0.6, 50),
-    "gamma": (0.55, 50),
+    "beta": (0.5, 50),
+    "delta": (0.5, 50),
+    "epsilon": (0.5, 50),
+    "gamma": (0.5, 50),
     "alpha": (0.35, 130),
+    "alphaWeird": (0.5, 100),
 }
 
 
@@ -72,13 +82,14 @@ def prepare_domain(pymol_cmd, domain_name: str) -> tuple:
             "gamma": "3p5r",
             "delta": "P48449",
             "epsilon": "P48449",
+            "alphaWeird": "Q7Z859",
         }
     )
     assert domain_name in domain_2_standard, f"Domain {domain_name} is not supported"
     required_file = domain_2_standard[domain_name]
     if not exists_in_pymol(pymol_cmd, required_file):
         if not os.path.exists(f"{required_file}.pdb"):
-            raise FileNotFoundError
+            raise FileNotFoundError(f"{required_file}.pdb while being in {os.getcwd()}")
         pymol_cmd.load(f"{required_file}.pdb")
 
     if "_" in domain_name:
@@ -90,6 +101,7 @@ def prepare_domain(pymol_cmd, domain_name: str) -> tuple:
             "gamma": " & resi 138-151+157-171+185-222+233-248+258-275+281-304+313-339 & chain A & ss H+S",
             "delta": " & resi 73-87+385-399+401-403+405-421+454-470+480-493+531-547+553-570+585-599+610-622+633-638+649-662+667-680+707-722+727-729 & chain A & ss H+S",
             "epsilon": " & resi 103-115+123-134+151-164+171-183+191-200+213-217+226-228+231-246+254-263+268-270+273-277+291-306+309-330+337-351+356-371+376-378+510-515 & chain A & ss H+S",
+            "alphaWeird": " & resi 6-23+38-58+66-68+81-96+118-136+152-177+183-208+229-239+241-246 & chain A & ss H+S"
         }[domain_name]
     domain_name_new = f"{domain_name}_domain_{uuid4()}"
     pymol_cmd.select(domain_name_new, f"{required_file} {selection_condition}")
@@ -179,7 +191,6 @@ def compute_full_mapping(
     obj_residues_set = set(map(int, file_2_all_residues[larger_obj]))
     residues_mapping_full = {}
     for domain_res in sorted_domain_residues:
-        #         print('domain_res', domain_res)
         if domain_res in obj_res_2_mapped_shift:
             shift = obj_res_2_mapped_shift[domain_res]
         else:
@@ -192,9 +203,7 @@ def compute_full_mapping(
                 )
             )
         mapped_res = int(domain_res) + shift
-        #         print('mapped_res', mapped_res)
         if mapped_res not in mapped_residues and mapped_res in obj_residues_set:
-            #             print('added!')
             residues_mapping_full[mapped_res] = domain_res
             _temp1.append(domain_res)
             _temp2.append(mapped_res)
@@ -262,7 +271,7 @@ def get_super_res_alignment(
 
     if not exists_in_pymol(pymol_cmd, larger_obj):
         if not os.path.exists(f"{larger_obj}.pdb"):
-            raise FileNotFoundError
+            raise FileNotFoundError(f"{larger_obj}.pdb while being in {os.getcwd()}")
         pymol_cmd.load(f"{larger_obj}.pdb")
         file_2_all_residues[larger_obj] = get_secondary_structure_residues_set(
             larger_obj, pymol_cmd
@@ -494,7 +503,7 @@ def get_pairwise_tmscore(
     for filename in [filename_1, filename_2]:
         if not exists_in_pymol(pymol_cmd, filename):
             if not os.path.exists(f"{filename}.pdb"):
-                raise FileNotFoundError
+                raise FileNotFoundError(f"{filename}.pdb while being in {os.getcwd()}")
             pymol_cmd.load(f"{filename}.pdb")
 
     region_residues_1 = set(fill_short_gaps(set(region_1.residues_mapping.keys())))
@@ -650,6 +659,7 @@ def get_alignments(
     pdb_filenames = [filepath.stem for filepath in pdb_filepaths]
     with Pool(n_jobs) as pool:
         list_of_alignment_results = pool.map(align_partial, pdb_filenames)
+
     file_2_tmscore_residues = defaultdict(list)
 
     for pdb_path, (tmscore, residues_mapping) in zip(
@@ -884,9 +894,10 @@ def get_mapped_regions_with_surroundings(
         already_mapped_residues
     )
 
+
     if not exists_in_pymol(cmd, filename):
         if not os.path.exists(f"{filename}.pdb"):
-            raise FileNotFoundError(f"{filename}.pdb")
+            raise FileNotFoundError(f"{filename}.pdb while being in {os.getcwd()}")
         cmd.load(f"{filename}.pdb")
 
     # for each mapped region, compute alpha helixes
@@ -948,21 +959,23 @@ def get_mapped_regions_with_surroundings(
             if min_dist < helix_sheet_dist_threshold:
                 if len(all_dists_with_regions) >= 2:
                     # leave unassigned if it is similarly close to two different regions
-                    second_closest_dist, second_closest_region_i = min(
-                        [
+                    regions_apart_from_the_closest = [
                             (dist, region)
                             for (dist, region) in all_dists_with_regions
                             if dist > min_dist
-                        ],
-                        key=lambda x: x[0],
-                    )
-                    if (
-                        second_closest_region_i == closest_region_i
-                        or min_dist < 0.9 * second_closest_dist
-                    ):
-                        mapped_region_2_added_residues[closest_region_i].extend(
-                            residue_segment_remaining
+                        ]
+                    if regions_apart_from_the_closest:
+                        second_closest_dist, second_closest_region_i = min(
+                            regions_apart_from_the_closest,
+                            key=lambda x: x[0],
                         )
+                        if (
+                            second_closest_region_i == closest_region_i
+                            or min_dist < 0.9 * second_closest_dist
+                        ):
+                            mapped_region_2_added_residues[closest_region_i].extend(
+                                residue_segment_remaining
+                            )
                 else:
                     mapped_region_2_added_residues[closest_region_i].extend(
                         residue_segment_remaining

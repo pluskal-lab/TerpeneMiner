@@ -36,6 +36,7 @@ Table of contents
     - [6 - Evaluating performance](#6---evaluating-performance)
     - [7 - Visualization of performance](#7---visualization-of-performance)
   - [Screening large databases](#screening-large-databases)
+  - [TerpeneMiner deployment as a backend service](#terpeneminer-deployment-as-a-backend-service)
 - [Reference](#reference)
     
 <!--te-->
@@ -92,11 +93,16 @@ pip install .
 -----------------------------------------
 
 ## Quick start
+
+### Running sequence-based TPS detection and classification
+To predict using the model based on TPS language model only, put the sequences of interest into a `.fasta` file and run
+
 ```bash
 cd TerpeneMiner
 conda activate terpene_miner
 python scripts/easy_predict_sequence_only.py --input-fasta-path data/af_inputs_test.fasta --output-csv-path test_seqs_pred.csv --detection-threshold 0.2 --detect-precursor-synthase
 ```
+
 -----------------------------------------
 
 ## Workflow
@@ -276,9 +282,12 @@ cd TerpeneMiner
 conda activate terpene_miner
 python -m terpeneminer.src.structure_processing.domain_detections \
     --needed-proteins-csv-path "data/TPS-Nov19_2023_verified_all_reactions_with_neg_with_folds.csv" \
+    --csv-id-column "Uniprot ID" \
     --input-directory-with-structures "data/alphafold_structs/" \
+    --is-bfactor-confidence \
+    --recompute-existing-secondary-structure-residues \
     --n-jobs 16 --detections-output-path "data/filename_2_detected_domains_completed_confident.pkl" \
-    --store-domains --domains-output-path "data/detected domains" > outputs/logs/tps_structures_segmentation.log 2>&1
+    --store-domains --domains-output-path "data/detected_domains" > outputs/logs/tps_structures_segmentation.log 2>&1
 ```
 
 #### 2 - Pairwise comparison of the detected domains
@@ -291,8 +300,9 @@ cd TerpeneMiner
 conda activate terpene_miner
 python -m terpeneminer.src.structure_processing.compute_pairwise_similarities_of_domains \
     --name all \
-    --n-jobs 64 \
-    --precomputed-scores-path "data/precomputed_tmscores.pkl" > outputs/logs/pairwise_comparisons.log 2>&1
+    --needed-proteins-csv-path "data/TPS-Nov19_2023_verified_all_reactions_with_neg_with_folds.csv" \
+    --csv-id-column "Uniprot ID" \
+    --n-jobs 64 > outputs/logs/pairwise_comparisons.log 2>&1
 ```
 Note the `--precomputed-scores-path` argument. It is used to store the previously computed TM-scores. 
 For the efficiency of any future extensions of the project, we share the precomputed TM-scores in `data/precomputed_tmscores.pkl` on GitHub.
@@ -361,6 +371,13 @@ jupyter notebook
 
 Then, execute the notebook `notebooks/notebook_3_clustering_domains.ipynb`.
 
+#### 4 - Train classifiers of domain types and novel-domain detectors
+```bash
+cd TerpeneMiner
+conda activate terpene_miner
+python -m terpeneminer.src.structure_processing.train_domain_type_classifiers > outputs/logs/domain_type_classifier_training.log 2>&1
+```
+
 -----------------------------------------
 
 ### Predictive Modeling
@@ -412,11 +429,11 @@ After training a `PlmDomainsRandomForest`, to select the most important domains 
 cd TerpeneMiner
 conda activate terpene_miner
 python -m terpeneminer.src.models.plm_domain_faster.get_domains_feature_importances \
-    --top-most-important-domain-features-per-model 200 --output-path "data/domains_subset.pkl" > outputs/logs/domains_subset.log 2>&1
+    --top-most-important-domain-features-per-model 200 --output-path "data/domains_subset.pkl" 
 ```
 
 
-###### Troubleshoting
+###### Troubleshooting
  - Please note, that if you run into error `FileNotFoundError: [Errno 2] No such file or directory: '<path>/model_fold_0.pkl'`, 
 you might need to re-run the training of the model while specifying the  `save_trained_model: true` in the config. 
 
@@ -450,7 +467,7 @@ bash scripts/tps_tune.sh # see the script for more details and accommodate to yo
 ```
 
 For reproducability, we share outputs of the hyperparameter optimization
-on [zenodo](https://zenodo.org/records/10567437) as `outputs.zip`. You can simply unzip its contents to the `outputs`
+on [here](https://zenodo.org/records/10567437). You can simply unzip its contents to the `outputs`
 folder and run the consequent evaluation steps.
 
 If you want to train a single model using the best hyperparameters found during the previously run optimization, then set `optimize_hyperparams: false` in the config and run
@@ -705,6 +722,7 @@ cd TerpeneMiner
 conda activate terpene_miner
 python -m terpeneminer.src.screening.gather_classifier_checkpoints --output-path data/classifier_checkpoints.pkl
 ```
+Depending on the way you trained the models for individual folds, you might need to set `--use-all-folds` flag.
 
 Next, to estimate the required number of workers for the screening, run
 
@@ -733,6 +751,55 @@ cd TerpeneMiner
 conda activate terpene_miner
 python -m terpeneminer.src.screening.gather_detections_to_csv --screening-results-root "trembl_screening/detections_plm" --output-path "trembl_screening/detections_plm/detections_first_batch.csv" --delete-individual-files
 ``` 
+
+-----------------------------------------
+
+## TerpeneMiner deployment as a backend service
+
+Prepare models for deployment:
+```bash
+cd TerpeneMiner
+conda activate terpene_miner
+terpene_miner_main --select-single-experiment run --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_foldseek_with_minor_reactions_global_tuning 
+python -m terpeneminer.src.models.plm_domain_faster.get_domains_feature_importances \
+    --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_foldseek_with_minor_reactions_global_tuning \
+    --top-most-important-domain-features-per-model 50 --use-all-folds 
+python -m terpeneminer.src.models.plm_domain_faster.get_plm_feature_importances \
+    --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_foldseek_with_minor_reactions_global_tuning \
+    --top-most-important-plm-features-per-model 400 --use-all-folds 
+terpene_miner_main --select-single-experiment run --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_foldseek_with_minor_reactions_global_tuning_domains_subset_plm_subset
+python -m terpeneminer.src.screening.gather_classifier_checkpoints --output-path data/classifier_domain_and_plm_checkpoints.pkl --use-all-folds \
+    --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_foldseek_with_minor_reactions_global_tuning_domains_subset_plm_subset
+python -m terpeneminer.src.structure_processing.train_domain_type_classifiers
+```
+Start backend:
+```bash
+# specify port
+export PORT=<..>
+nohup uvicorn app_faster_with_foldseek:app --host 0.0.0.0 --port $PORT &> webserver_app.log &
+```
+For significantly slower but slightly more accurate predictions:
+```bash
+cd TerpeneMiner
+conda activate terpene_miner
+terpene_miner_main --select-single-experiment run --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_with_minor_reactions_global_tuning 
+python -m terpeneminer.src.models.plm_domain_faster.get_domains_feature_importances \
+    --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_with_minor_reactions_global_tuning \
+    --top-most-important-domain-features-per-model 50 --use-all-folds 
+python -m terpeneminer.src.models.plm_domain_faster.get_plm_feature_importances \
+    --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_with_minor_reactions_global_tuning \
+    --top-most-important-plm-features-per-model 400 --use-all-folds 
+terpene_miner_main --select-single-experiment run --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_with_minor_reactions_global_tuning_domains_subset_plm_subset
+python -m terpeneminer.src.screening.gather_classifier_checkpoints --output-path data/classifier_domain_and_plm_checkpoints.pkl --use-all-folds \
+    --model PlmDomainsRandomForest --model-version tps_esm-1v-subseq_with_minor_reactions_global_tuning_domains_subset_plm_subset
+python -m terpeneminer.src.structure_processing.train_domain_type_classifiers
+```
+and then start the backend:
+```bash
+# specify port
+export PORT=<..>
+nohup uvicorn app:app --host 0.0.0.0 --port $PORT &> webserver_app.log &
+```
 
 -----------------------------------------
 
