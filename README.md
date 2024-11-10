@@ -101,7 +101,7 @@ git clone https://github.com/pluskal-lab/TerpeneMiner.git
 cd TerpeneMiner
 . scripts/setup_env.sh
 conda activate terpene_miner
-pip install .
+pip install -e .
 ```
 -----------------------------------------
 
